@@ -30,7 +30,8 @@ type workerResult struct {
 }
 
 var (
-	config configType
+	config        configType
+	connCountChan chan struct{}
 )
 
 func init() {
@@ -42,9 +43,11 @@ func init() {
 }
 
 func main() {
+	connCountChan = make(chan struct{}, config.maxConnection)
+
 	server := http.Server{
 		Addr:    ":" + strconv.Itoa(config.port),
-		Handler: checkConnectionsCount(postHandler, config.maxConnection),
+		Handler: checkConnectionsCount(postHandler),
 	}
 
 	go func() {
@@ -71,14 +74,12 @@ func main() {
 	log.Print("App shutdown")
 }
 
-func checkConnectionsCount(next http.HandlerFunc, requestLimit int) http.HandlerFunc {
+func checkConnectionsCount(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		sema := make(chan struct{}, requestLimit)
-
 		select {
-		case sema <- struct{}{}:
+		case connCountChan <- struct{}{}:
 			next.ServeHTTP(w, r)
-			<-sema
+			<-connCountChan
 		default:
 			log.Print("The maximum number of used connections is exhausted.")
 			http.Error(w, http.StatusText(http.StatusTooManyRequests), http.StatusTooManyRequests)
@@ -131,6 +132,7 @@ func postHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
+
 	jsonResult, err := json.Marshal(urlsResult)
 	if err != nil {
 		log.Print(err)
